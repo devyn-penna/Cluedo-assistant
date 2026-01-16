@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cluedo Assistant</title>
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background:#1a1a1a;
+    color:#e5e5e5;
+    padding:20px;
+}
+
+h1 { font-size:26px; }
+h2 { margin-top:20px; }
+label { display:block; margin-top:10px; }
+select, input, button {
+    width:100%;
+    padding:6px;
+    margin-top:4px;
+    border-radius:8px;
+    border:none;
+}
+
+button {
+    background:#4b5563;
+    color:#e5e5e5;
+    cursor:pointer;
+    margin-top:10px;
+}
+button:hover { background:#6b7280; }
+.danger { background:#dc2626; color:#fff; }
+
+.panel {
+    background:#111111;
+    padding:14px;
+    border-radius:14px;
+    margin-bottom:20px;
+}
+
+.grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
+.card {
+    padding:10px;
+    border-radius:12px;
+    background:#2d2d2d;
+    cursor:pointer;
+}
+.card.eliminated { background:#dc2626; }
+.disabled { opacity:0.4; pointer-events:none; }
+.prob { font-size:13px; opacity:.85; }
+</style>
+</head>
+<body>
+
+<h1>🕵️ Cluedo Assistant</h1>
+
+<div class="panel">
+<h2>Setup – Your Starting Hand</h2>
+<p>Click any cards you already have to cross them off.</p>
+<div class="grid" id="setupCards"></div>
+</div>
+
+<div class="panel">
+<h2>Players</h2>
+<label>Players (in order)</label>
+<input id="playersInput" placeholder="Devyn, Lisa, Caiden, Xavier">
+<button onclick="setPlayers()">Set Players</button>
+<p><strong>Current Turn:</strong> <span id="currentPlayer">Not set</span></p>
+</div>
+
+<div class="panel">
+<h2>Current Go</h2>
+<label>Person guessed</label>
+<select id="guessPerson"></select>
+<label>Weapon guessed</label>
+<select id="guessWeapon"></select>
+<label>Room guessed</label>
+<select id="guessRoom"></select>
+<label>What happened?</label>
+<select id="result" onchange="updateUI()">
+<option value="shown">A card was shown and I saw it</option>
+<option value="unknownshow">A card was shown but I didn’t see it</option>
+<option value="noshow">No one could show</option>
+<option value="random">Random clue card revealed</option>
+</select>
+<label>If shown / random: which card?</label>
+<select id="shownCard"></select>
+<label>If random clue but not seen?</label>
+<select id="randomUnknown" onchange="updateUI()">
+<option value="no">No, I saw the card</option>
+<option value="yes">Yes, I didn’t see it</option>
+</select>
+<button onclick="processTurn()">Process Turn</button>
+</div>
+
+<h2>Probabilities</h2>
+<div class="grid" id="cards"></div>
+<button class="danger" onclick="suggest()">🎯 Most Likely Guess</button>
+<h2 id="suggestion"></h2>
+
+<script>
+var people=["Devyn","Lisa","Caiden","Xavier","Leo","Claudia"];
+var weapons=["Dave","Pool Stick","Nerf Gun","Cricket Bat","Knife","Banana"];
+var rooms=["Playroom","Bathroom","Devyns Bedroom","Lisas Bedroom","Caicens Bedroom","Kitchen","Toilet","Dining Room","Lounge"];
+var allCards=people.concat(weapons,rooms);
+var prob={}, eliminated={}, startingHand=[], players=[], turnIndex=0;
+allCards.forEach(function(c){prob[c]=1; eliminated[c]=false;});
+
+function toggleStartCard(card){
+  var idx = startingHand.indexOf(card);
+  if(idx===-1){ startingHand.push(card); eliminated[card]=true; prob[card]=0; }
+  else { startingHand.splice(idx,1); eliminated[card]=false; prob[card]=1; }
+  normalizeAll(); render(); renderSetup();
+}
+
+function updateUI(){
+  var res = document.getElementById('result').value;
+  var unseenRandom = document.getElementById('randomUnknown').value==='yes';
+  var shown = document.getElementById('shownCard');
+  var randomBox = document.getElementById('randomUnknown');
+
+  // Reset all dropdowns first
+  ['guessPerson','guessWeapon','guessRoom','shownCard','randomUnknown'].forEach(function(id){
+    document.getElementById(id).classList.remove('disabled');
+  });
+
+  // Grey out Person/Weapon/Room if random clue selected
+  if(res === 'random'){
+    ['guessPerson','guessWeapon','guessRoom'].forEach(function(id){
+      document.getElementById(id).classList.add('disabled');
+    });
+    // Only grey ShownCard if you didn't see it
+    if(unseenRandom){
+      shown.classList.add('disabled');
+    }
+    // randomUnknown stays active
+  } else {
+    // If any other option selected, grey the 'randomUnknown' dropdown
+    randomBox.classList.add('disabled');
+    if(res==='noshow'){ shown.classList.add('disabled'); }
+  }
+}
+
+function normalize(arr){var total=0; arr.forEach(function(c){total+=prob[c];}); arr.forEach(function(c){prob[c]=total?prob[c]/total:0;});}
+function normalizeAll(){normalize(people); normalize(weapons); normalize(rooms);}
+
+function setPlayers(){
+  players=document.getElementById('playersInput').value.split(',').map(function(p){return p.trim();}).filter(Boolean);
+  turnIndex=0;
+  document.getElementById('currentPlayer').innerText=players[0]||'Not set';
+}
+
+function nextTurn(){
+  if(!players.length) return;
+  turnIndex=(turnIndex+1)%players.length;
+  document.getElementById('currentPlayer').innerText=players[turnIndex];
+}
+
+function processTurn(){
+  var p=document.getElementById('guessPerson').value;
+  var w=document.getElementById('guessWeapon').value;
+  var r=document.getElementById('guessRoom').value;
+  var res=document.getElementById('result').value;
+  var shown=document.getElementById('shownCard').value;
+  var unseenRandom=document.getElementById('randomUnknown').value==='yes';
+
+  if(shown && (res==='shown' || (res==='random' && !unseenRandom))){
+    eliminated[shown]=true;
+    prob[shown]=0;
+  }
+
+  if(res==='unknownshow'){
+    [p,w,r].forEach(function(c){ prob[c]*=0.7; });
+    var possible = [p,w,r].filter(c => !startingHand.includes(c) && !eliminated[c]);
+    if(possible.length === 1){
+      var deduced = possible[0];
+      eliminated[deduced]=true;
+      prob[deduced]=0;
+    }
+  }
+  if(res==='noshow'){ [p,w,r].forEach(function(c){ prob[c]*=1.5; }); }
+  if(res==='random'){
+    if(unseenRandom){ allCards.forEach(function(c){ prob[c]*=0.97; }); }
+    [p,w,r].forEach(function(c){ prob[c]*=1.2; });
+  }
+
+  normalizeAll(); render(); renderSetup(); updateUI();
+
+  if(res!=='random'){
+    nextTurn();
+  }
+}
+
+function render(){
+  var box=document.getElementById('cards'); box.innerHTML='';
+  allCards.forEach(function(c){
+    var d=document.createElement('div');
+    d.className='card'+(eliminated[c]?' eliminated':'');
+    d.innerHTML='<strong>'+c+'</strong><div class="prob">'+(prob[c]*100).toFixed(1)+'%</div>';
+    box.appendChild(d);
+  });
+}
+
+function renderSetup(){
+  var box=document.getElementById('setupCards'); box.innerHTML='';
+  allCards.forEach(function(c){
+    var d=document.createElement('div');
+    d.className='card'+(eliminated[c]?' eliminated':'');
+    d.innerText=c;
+    d.onclick=function(){ toggleStartCard(c); };
+    box.appendChild(d);
+  });
+}
+
+function suggest(){
+  function best(arr){return arr.reduce(function(a,b){return prob[a]>prob[b]?a:b;});}
+  document.getElementById('suggestion').innerText='🎯 '+best(people)+' with the '+best(weapons)+' in the '+best(rooms);
+}
+
+function fill(id,arr){var el=document.getElementById(id); arr.forEach(function(v){var o=document.createElement('option'); o.text=v; el.add(o);});}
+fill('guessPerson',people); fill('guessWeapon',weapons); fill('guessRoom',rooms); fill('shownCard',allCards);
+normalizeAll(); render(); renderSetup(); updateUI();
+</script>
+
+</body>
+</html>
